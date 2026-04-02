@@ -1,0 +1,33 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+logs/
+*.log
+
+# Database
+data/historial.db
+
+# Entorno (NO commitear)
+.env
+
+# Testing
+.pytest_cache/
+.hypothesis/
+
+# OS
+.DS_Store
+Thumbs.db

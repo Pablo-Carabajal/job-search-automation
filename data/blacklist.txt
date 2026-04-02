@@ -1,0 +1,5 @@
+# Empresas excluidas del envío automático
+# Una por línea, la comparación es case-insensitive y por substring
+ZF Sachs S.A.
+ZF Sachs
+ZF Argentina
