@@ -10,6 +10,7 @@ from core.history_manager import HistoryManager
 from core.job_filter import JobFilter
 from core.email_sender import EmailSender
 from core.fallback import LocalCompanyFallback
+from core.reporter import Reporter
 
 from scrapers.computrabajo import ScraperComputrabajo
 from scrapers.bumeran import ScraperBumeran
@@ -88,63 +89,66 @@ def ejecutar_ciclo_diario():
     ofertas_validas = filtro.filtrar(ofertas_raw, Config.CATEGORIAS)
     logging.info(f"Ofertas habilitadas para envío: {len(ofertas_validas)}")
     
+    MINIMO_ENVIOS_DIARIOS = Config.MINIMO_ENVIOS_DIARIOS
     envios_exitosos = 0
     envios_error = 0
-    
-    if ofertas_validas:
-        for oferta in ofertas_validas:
-            logging.info(f"Procesando: {oferta.titulo} en {oferta.empresa}")
-            
-            if not oferta.email_contacto:
-                logging.info(f"Oferta sin email de contacto, omitiendo: {oferta.titulo}")
-                record = SendRecord(
-                    empresa=oferta.empresa if oferta.empresa != "desconocida" else oferta.id,
-                    email_destino="sin_email",
-                    fecha_envio=date.today(),
-                    tipo="oferta_portal",
-                    estado="omitido",
-                    url_oferta=oferta.url_oferta,
-                    notas=f"Sin email de contacto. Portal: {oferta.portal_origen}"
-                )
-                history.registrar_envio(record)
-                continue
-            
-            exito = sender.enviar_cv(oferta, oferta.email_contacto)
-            
-            clave_empresa = oferta.empresa if oferta.empresa != "desconocida" else oferta.id
-            estado = "enviado" if exito else "error"
+    ofertas_sin_email = 0
+
+    # --- Fase 1: enviar a ofertas de portales que tengan email ---
+    for oferta in ofertas_validas:
+        logging.info(f"Procesando oferta: {oferta.titulo} en {oferta.empresa}")
+
+        if not oferta.email_contacto:
+            ofertas_sin_email += 1
             record = SendRecord(
-                empresa=clave_empresa,
-                email_destino=oferta.email_contacto,
+                empresa=oferta.empresa if oferta.empresa != "desconocida" else oferta.id,
+                email_destino="sin_email",
                 fecha_envio=date.today(),
                 tipo="oferta_portal",
-                estado=estado,
+                estado="omitido",
                 url_oferta=oferta.url_oferta,
-                notas=f"Portal: {oferta.portal_origen}"
+                notas=f"Sin email de contacto. Portal: {oferta.portal_origen}"
             )
             history.registrar_envio(record)
-            
-            if exito:
-                envios_exitosos += 1
-            else:
-                envios_error += 1
-            
-            delay = random.uniform(Config.DELAY_ENTRE_ENVIOS - 15, Config.DELAY_ENTRE_ENVIOS + 15)
-            logging.debug(f"Esperando {delay:.1f}s antes del siguiente envío...")
-            time.sleep(delay)
-    else:
-        logging.info("Sin ofertas disponibles. Activando fallback empresas locales...")
-        
+            continue
+
+        exito = sender.enviar_cv(oferta, oferta.email_contacto)
+        clave_empresa = oferta.empresa if oferta.empresa != "desconocida" else oferta.id
+        estado = "enviado" if exito else "error"
+        record = SendRecord(
+            empresa=clave_empresa,
+            email_destino=oferta.email_contacto,
+            fecha_envio=date.today(),
+            tipo="oferta_portal",
+            estado=estado,
+            url_oferta=oferta.url_oferta,
+            notas=f"Portal: {oferta.portal_origen}"
+        )
+        history.registrar_envio(record)
+        if exito:
+            envios_exitosos += 1
+        else:
+            envios_error += 1
+
+        delay = random.uniform(Config.DELAY_ENTRE_ENVIOS - 15, Config.DELAY_ENTRE_ENVIOS + 15)
+        time.sleep(delay)
+
+    logging.info(f"Fase portales: {envios_exitosos} enviados, {ofertas_sin_email} sin email de contacto")
+
+    # --- Fase 2: fallback siempre que no se alcance el mínimo diario ---
+    faltantes = MINIMO_ENVIOS_DIARIOS - envios_exitosos
+    if faltantes > 0:
+        logging.info(
+            f"Envíos exitosos ({envios_exitosos}) < mínimo ({MINIMO_ENVIOS_DIARIOS}). "
+            f"Activando fallback para completar {faltantes} envíos..."
+        )
         fallback = LocalCompanyFallback(Config.RUTA_EMPRESAS_LOCALES, history)
-        empresas = fallback.obtener_empresas_habilitadas(Config.MAX_FALLBACK_POR_DIA)
-        
-        logging.info(f"Empresas locales habilitadas: {len(empresas)}")
-        
+        empresas = fallback.obtener_empresas_habilitadas(faltantes)
+        logging.info(f"Empresas locales habilitadas para fallback: {len(empresas)}")
+
         for empresa in empresas:
             logging.info(f"Enviando a empresa local: {empresa.nombre}")
-            
             exito = sender.enviar_cv_directo(empresa)
-            
             estado = "enviado" if exito else "error"
             record = SendRecord(
                 empresa=empresa.nombre,
@@ -155,17 +159,17 @@ def ejecutar_ciclo_diario():
                 notas=f"Rubro: {empresa.rubro}"
             )
             history.registrar_envio(record)
-            
             if exito:
                 envios_exitosos += 1
             else:
                 envios_error += 1
-            
+
             delay = random.uniform(Config.DELAY_ENTRE_FALLBACK - 30, Config.DELAY_ENTRE_FALLBACK + 30)
-            logging.debug(f"Esperando {delay:.1f}s...")
             time.sleep(delay)
-    
-    logging.info(f"Ciclo completado. Éxitos: {envios_exitosos}, Errores: {envios_error}")
+    else:
+        logging.info(f"Mínimo diario alcanzado con envíos de portales ({envios_exitosos}). No se activa fallback.")
+
+    logging.info(f"Ciclo completado. Éxitos: {envios_exitosos}, Errores: {envios_error}, Sin email: {ofertas_sin_email}")
     logging.info("=" * 50)
 
 

@@ -126,6 +126,8 @@ pytest tests/ -v
 - Las ofertas de portales como Computrabajo no exponen emails de contacto directamente
 - El sistema marca como "omitido" las ofertas sin email disponible
 - El fallback de empresas locales permite envíos cuando no hay ofertas de portales
+- **Importante**: Requiere PC encendida a las 11:00hs para Windows Task Scheduler
+- Para ejecución desde GitHub (sin PC), usar GitHub Actions
 
 ## Licencia
 

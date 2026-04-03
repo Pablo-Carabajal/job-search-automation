@@ -20,6 +20,7 @@ class Config:
 
     COOLDOWN_DIAS = int(os.getenv("COOLDOWN_DIAS", "20"))
     MAX_FALLBACK_POR_DIA = int(os.getenv("MAX_FALLBACK_POR_DIA", "10"))
+    MINIMO_ENVIOS_DIARIOS = int(os.getenv("MINIMO_ENVIOS_DIARIOS", "10"))
     DELAY_ENTRE_ENVIOS = int(os.getenv("DELAY_ENTRE_ENVIOS", "45"))
     DELAY_ENTRE_FALLBACK = int(os.getenv("DELAY_ENTRE_FALLBACK", "90"))
     MAX_PAGINAS_PORTAL = int(os.getenv("MAX_PAGINAS_PORTAL", "5"))
@@ -29,6 +30,8 @@ class Config:
     CIUDAD = "San Francisco"
     PROVINCIA = "Córdoba"
     PAIS = "Argentina"
+
+    CANDIDATO_EMAIL = os.getenv("CANDIDATO_EMAIL", "carabajalpabloezequiel@gmail.com")
 
     ASUNTO_OFERTA_TEMPLATE = "templates/asunto_oferta.txt"
     CUERPO_OFERTA_TEMPLATE = "templates/cuerpo_oferta.txt"

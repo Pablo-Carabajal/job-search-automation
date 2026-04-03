@@ -146,3 +146,37 @@ class EmailSender:
             rubro=empresa.rubro
         )
         return self._enviar(empresa.email, asunto, cuerpo)
+
+    def enviar_texto(self, destinatario: str, asunto: str, cuerpo: str) -> bool:
+        """Envía un email de texto sin adjunto CV. Usado para reportes."""
+        if not destinatario or not destinatario.strip():
+            logger.warning("Destinatario vacío en enviar_texto")
+            return False
+        if not self.config.usuario or not self.config.password:
+            logger.error("Credenciales SMTP vacías, no se puede enviar texto")
+            return False
+
+        try:
+            msg = MIMEMultipart("alternative")
+            msg["From"] = f"{self.config.nombre_remitente} <{self.config.usuario}>"
+            msg["To"] = destinatario
+            msg["Subject"] = asunto
+            msg["Reply-To"] = self.config.usuario
+            msg["Date"] = formatdate(localtime=True)
+            msg["Message-ID"] = make_msgid(domain=self.config.usuario.split("@")[-1])
+
+            msg.attach(MIMEText(cuerpo, "plain", "utf-8"))
+            msg.attach(MIMEText(self._texto_a_html(cuerpo), "html", "utf-8"))
+
+            server = smtplib.SMTP(self.config.smtp_host, self.config.smtp_port)
+            server.starttls()
+            server.login(self.config.usuario, self.config.password)
+            server.send_message(msg)
+            server.quit()
+
+            logger.info(f"Texto enviado a {destinatario} | Asunto: {asunto}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error al enviar texto a {destinatario}: {e}")
+            return False

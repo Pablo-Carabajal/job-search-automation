@@ -1,0 +1,57 @@
+name: Daily Job Search
+
+on:
+  schedule:
+    - cron: '0 14 * * *'  # 11:00 AM Argentina time (UTC-3)
+  workflow_dispatch:  # Permite ejecución manual
+
+jobs:
+  run-job-search:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          
+      - name: Create .env file
+        run: |
+          cat > .env << EOF
+          SMTP_HOST=${{ secrets.SMTP_HOST }}
+          SMTP_PORT=${{ secrets.SMTP_PORT }}
+          SMTP_USER=${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }}
+          NOMBRE_REMITENTE=${{ secrets.NOMBRE_REMITENTE }}
+          CANDIDATO_EMAIL=${{ secrets.CANDIDATO_EMAIL }}
+          
+          RUTA_CV=assets/cv.pdf
+          RUTA_HISTORIAL=data/historial.db
+          RUTA_EMPRESAS_LOCALES=data/local_companies.json
+          RUTA_BLACKLIST=data/blacklist.txt
+          
+          COOLDOWN_DIAS=20
+          MAX_FALLBACK_POR_DIA=10
+          MINIMO_ENVIOS_DIARIOS=10
+          DELAY_ENTRE_ENVIOS=45
+          DELAY_ENTRE_FALLBACK=90
+          MAX_PAGINAS_PORTAL=5
+          
+          CATEGORIAS=Producción / Operarios / Manufactura,Administración / Oficina,Almacén / Logística / Transporte,Ventas
+          EOF
+          
+      - name: Run job search
+        run: python main.py
+        
+      - name: Commit updated historial.db
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Update historial.db after daily job search"
+          file_pattern: data/historial.db
