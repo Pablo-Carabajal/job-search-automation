@@ -92,5 +92,47 @@
     "email": "rrhh@hospitalregionalsf.gob.ar",
     "rubro": "Salud / Administración",
     "direccion": "San Francisco, Córdoba"
+  },
+  {
+    "nombre": "Estudio Rocha & Asociados",
+    "email": "info@estudiorochayasoc.com.ar",
+    "rubro": "Recursos Humanos / Consultora",
+    "direccion": "Moreno 357, San Francisco, Córdoba",
+    "nota": "Consultora líder en la zona, maneja Working360"
+  },
+  {
+    "nombre": "Suma Recursos Humanos",
+    "email": "consultas@sumarecursoshumanos.com.ar",
+    "rubro": "Recursos Humanos / Consultora",
+    "direccion": "Córdoba, Argentina",
+    "nota": "Consultoría y servicios especializados en RRHH"
+  },
+  {
+    "nombre": "RH Master",
+    "email": "info@rhmaster.com.ar",
+    "rubro": "Recursos Humanos / Consultora",
+    "direccion": "Córdoba, Argentina",
+    "nota": "Agencia de Selección de Personal con 23 años"
+  },
+  {
+    "nombre": "Mundo Humano",
+    "email": "cv@mundo-humano.com.ar",
+    "rubro": "Recursos Humanos / Consultora",
+    "direccion": "Córdoba, Argentina",
+    "nota": "Consultora de Recursos Humanos y Selección"
+  },
+  {
+    "nombre": "Nexo Group",
+    "email": "info@nexo-group.com.ar",
+    "rubro": "Recursos Humanos / Consultora",
+    "direccion": "Córdoba, Argentina",
+    "nota": "Consultora de RRHH en Córdoba"
+  },
+  {
+    "nombre": "Infocor Software",
+    "email": "infocorsoftware@gmail.com",
+    "rubro": "Software / Tecnología",
+    "direccion": "San Francisco, Córdoba",
+    "nota": "Desarrollo de software local"
   }
 ]
