@@ -2,56 +2,81 @@ name: Daily Job Search
 
 on:
   schedule:
-    - cron: '0 14 * * *'  # 11:00 AM Argentina time (UTC-3)
-  workflow_dispatch:  # Permite ejecución manual
+    - cron: '0 14 * * *'  # 11:00 AM Argentina (UTC-3)
+  workflow_dispatch:       # Ejecución manual desde la UI
 
 jobs:
   run-job-search:
     runs-on: ubuntu-latest
-    
+    timeout-minutes: 60
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
-        
+        uses: actions/checkout@v4.2.2
+
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5.4.0
         with:
           python-version: '3.12'
-          
+
       - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Chromium for Selenium
         run: |
-          pip install -r requirements.txt
-          
-      - name: Create .env file
+          sudo apt-get update -q
+          sudo apt-get install -y chromium-browser
+
+      - name: Create required directories
         run: |
-          cat > .env << EOF
-          SMTP_HOST=${{ secrets.SMTP_HOST }}
-          SMTP_PORT=${{ secrets.SMTP_PORT }}
-          SMTP_USER=${{ secrets.SMTP_USER }}
-          SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }}
-          NOMBRE_REMITENTE=${{ secrets.NOMBRE_REMITENTE }}
-          CANDIDATO_EMAIL=${{ secrets.CANDIDATO_EMAIL }}
-          
-          RUTA_CV=assets/cv.pdf
-          RUTA_HISTORIAL=data/historial.db
-          RUTA_EMPRESAS_LOCALES=data/local_companies.json
-          RUTA_BLACKLIST=data/blacklist.txt
-          
-          COOLDOWN_DIAS=20
-          MAX_FALLBACK_POR_DIA=10
-          MINIMO_ENVIOS_DIARIOS=10
-          DELAY_ENTRE_ENVIOS=45
-          DELAY_ENTRE_FALLBACK=90
-          MAX_PAGINAS_PORTAL=5
-          
-          CATEGORIAS=Producción / Operarios / Manufactura,Administración / Oficina,Almacén / Logística / Transporte,Ventas
-          EOF
-          
-      - name: Run job search
-        run: python main.py
-        
-      - name: Commit updated historial.db
-        uses: stefanzweifel/git-auto-commit-action@v5
+          mkdir -p logs
+          mkdir -p data
+          mkdir -p assets
+
+      - name: Download historial artifact (if exists)
+        uses: actions/download-artifact@v4.2.1
         with:
-          commit_message: "Update historial.db after daily job search"
-          file_pattern: data/historial.db
+          name: historial
+          path: data/
+        continue-on-error: true
+
+      - name: Verify CV exists
+        run: |
+          if [ ! -f "assets/cv.pdf" ]; then
+            echo "ERROR: assets/cv.pdf no encontrado en el repositorio."
+            echo "Debes commitear el archivo assets/cv.pdf para que el sistema funcione."
+            exit 1
+          fi
+          echo "CV encontrado: $(ls -lh assets/cv.pdf)"
+
+      - name: Run job search
+        env:
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          NOMBRE_REMITENTE: ${{ secrets.NOMBRE_REMITENTE }}
+          CANDIDATO_EMAIL: ${{ secrets.CANDIDATO_EMAIL }}
+          RUTA_CV: assets/cv.pdf
+          RUTA_HISTORIAL: data/historial.db
+          RUTA_EMPRESAS_LOCALES: data/local_companies.json
+          RUTA_BLACKLIST: data/blacklist.txt
+          COOLDOWN_DIAS: "20"
+          MAX_FALLBACK_POR_DIA: "10"
+          MINIMO_ENVIOS_DIARIOS: "10"
+          DELAY_ENTRE_ENVIOS: "45"
+          DELAY_ENTRE_FALLBACK: "90"
+          MAX_PAGINAS_PORTAL: "5"
+          CATEGORIAS: "Producción / Operarios / Manufactura,Administración / Oficina,Almacén / Logística / Transporte,Ventas"
+        run: python main.py
+
+      - name: Upload historial artifact
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: historial
+          path: data/historial.db
+          retention-days: 30
+          overwrite: true
