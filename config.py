@@ -8,7 +8,7 @@ load_dotenv(BASE_DIR / ".env")
 
 class Config:
     SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
-    SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+    SMTP_PORT = int(os.getenv("SMTP_PORT") or "587")
     SMTP_USER = os.getenv("SMTP_USER")
     SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
     NOMBRE_REMITENTE = os.getenv("NOMBRE_REMITENTE", "Pablo Ezequiel Carabajal")
@@ -18,12 +18,12 @@ class Config:
     RUTA_EMPRESAS_LOCALES = BASE_DIR / os.getenv("RUTA_EMPRESAS_LOCALES", "data/local_companies.json")
     RUTA_BLACKLIST = BASE_DIR / os.getenv("RUTA_BLACKLIST", "data/blacklist.txt")
 
-    COOLDOWN_DIAS = int(os.getenv("COOLDOWN_DIAS", "20"))
-    MAX_FALLBACK_POR_DIA = int(os.getenv("MAX_FALLBACK_POR_DIA", "10"))
-    MINIMO_ENVIOS_DIARIOS = int(os.getenv("MINIMO_ENVIOS_DIARIOS", "10"))
-    DELAY_ENTRE_ENVIOS = int(os.getenv("DELAY_ENTRE_ENVIOS", "45"))
-    DELAY_ENTRE_FALLBACK = int(os.getenv("DELAY_ENTRE_FALLBACK", "90"))
-    MAX_PAGINAS_PORTAL = int(os.getenv("MAX_PAGINAS_PORTAL", "5"))
+    COOLDOWN_DIAS = int(os.getenv("COOLDOWN_DIAS") or "20")
+    MAX_FALLBACK_POR_DIA = int(os.getenv("MAX_FALLBACK_POR_DIA") or "10")
+    MINIMO_ENVIOS_DIARIOS = int(os.getenv("MINIMO_ENVIOS_DIARIOS") or "10")
+    DELAY_ENTRE_ENVIOS = int(os.getenv("DELAY_ENTRE_ENVIOS") or "45")
+    DELAY_ENTRE_FALLBACK = int(os.getenv("DELAY_ENTRE_FALLBACK") or "90")
+    MAX_PAGINAS_PORTAL = int(os.getenv("MAX_PAGINAS_PORTAL") or "5")
 
     CATEGORIAS = [c.strip() for c in os.getenv("CATEGORIAS", "").split(",") if c.strip()]
 
