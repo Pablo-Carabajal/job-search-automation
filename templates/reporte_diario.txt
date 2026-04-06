@@ -1,0 +1,14 @@
+Reporte de búsqueda laboral automatizada
+Fecha: {fecha}
+========================================
+
+RESUMEN
+-------
+Envíos exitosos : {envios_exitosos}
+Errores         : {envios_error}
+Total procesado : {total}
+
+{seccion_envios}{seccion_sin_envios}
+---
+Este reporte fue generado automáticamente por job-search-automation.
+Repositorio: https://github.com/Pablo-Carabajal/job-search-automation
