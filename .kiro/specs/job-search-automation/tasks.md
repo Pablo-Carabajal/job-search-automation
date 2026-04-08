@@ -1,139 +1,112 @@
-# Plan de Implementación: job-search-automation (Iteración de Correcciones)
+# Plan de Implementación: job-search-automation (Nuevo Enfoque — Postulación via Selenium)
 
 ## Descripción General
 
-Correcciones sobre el sistema existente, ordenadas de menor a mayor dependencia: primero los cambios atómicos (templates, config), luego los componentes centrales (email_sender, job_filter, scrapers) y finalmente dependencias de infraestructura (requirements.txt).
+Migración completa del sistema de envío de emails a postulación directa en Computrabajo via Selenium. Las tareas están ordenadas de menor a mayor dependencia: primero eliminar lo obsoleto, luego crear el nuevo módulo, luego actualizar el orquestador y la infraestructura.
 
 ## Tareas
 
-- [x] 1. Corregir template de asunto
-  - [x] 1.1 Eliminar el prefijo `"Asunto: "` del archivo `templates/asunto_oferta.txt`
-    - El archivo debe contener únicamente el texto del asunto sin ningún prefijo
-    - Resultado esperado: `Postulación – {puesto} en {empresa}`
-    - _Requisitos: 1.1_
-
-  - [ ]* 1.2 Escribir test unitario para verificar que el asunto no contiene prefijos espurios
-    - Verificar que el asunto resultante no comience con `"Asunto:"`, `"Subject:"`, `"Re:"` ni `"Fwd:"`
-    - _Requisitos: 1.4_
-
-- [x] 2. Corregir `config.py` — valor por defecto de `NOMBRE_REMITENTE`
-  - [x] 2.1 Verificar que el valor por defecto de `NOMBRE_REMITENTE` sea `"Pablo Ezequiel Carabajal"` en `config.py`
-    - El valor actual ya es correcto; confirmar que no hay otro hardcode en el archivo
-    - _Requisitos: 10.3_
-
-- [x] 3. Corregir `core/email_sender.py` — eliminar todos los valores hardcodeados
-  - [x] 3.1 Reemplazar el nombre del archivo adjunto hardcodeado `"CV_Eyla_Bohr.pdf"` por uno dinámico
-    - Usar `config.nombre_remitente` formateado como `"CV_{nombre_sin_espacios}.pdf"` (espacios → guiones bajos)
-    - Si `config.nombre_remitente` está vacío, registrar error en log y retornar `False` sin lanzar excepción
-    - Archivo: `core/email_sender.py`, método `_enviar`
-    - _Requisitos: 2.1, 2.2, 2.3_
-
-  - [x] 3.2 Reemplazar el asunto hardcodeado `"Presentación espontánea - Eyla Bohr"` por uno dinámico
-    - Usar `f"Presentación espontánea - {self.config.nombre_remitente}"`
-    - Archivo: `core/email_sender.py`, método `enviar_cv_directo`
-    - _Requisitos: 3.3, 10.1_
-
-  - [x] 3.3 Reemplazar el fallback hardcodeado `"Eyla Bohr"` en `_construir_cuerpo`
-    - Usar `self.config.nombre_remitente` como valor de fallback para la variable `{nombre}`
-    - Archivo: `core/email_sender.py`, método `_construir_cuerpo`
-    - _Requisitos: 3.2, 10.2_
-
-  - [x] 3.4 Agregar cabeceras anti-spam obligatorias en el método `_enviar`
-    - Agregar `Reply-To` con el valor de `self.config.usuario`
-    - Agregar `Date` con la fecha y hora actuales en formato RFC 2822 (`email.utils.formatdate(localtime=True)`)
-    - Agregar `Message-ID` generado con `email.utils.make_msgid(domain=self.config.usuario.split("@")[-1])`
-    - Asegurar que el campo `From` use el formato `"Nombre Apellido <usuario@dominio>"`
-    - Archivo: `core/email_sender.py`, método `_enviar`
-    - _Requisitos: 4.1, 4.2, 4.3, 4.4_
-
-  - [x] 3.5 Cambiar el cuerpo del email a formato `multipart/alternative` con partes `text/plain` y `text/html`
-    - Reemplazar el `MIMEMultipart()` actual por `MIMEMultipart("mixed")` con una parte interna `MIMEMultipart("alternative")`
-    - La parte `text/plain` debe ser la primera alternativa
-    - La parte `text/html` debe ser un HTML mínimo válido que envuelva el mismo texto en `<pre>` o párrafos `<p>`
-    - El adjunto CV debe seguir adjuntándose al mensaje externo `mixed`
-    - Archivo: `core/email_sender.py`, método `_enviar`
-    - _Requisitos: 5.1, 5.3, 5.4_
-
-  - [ ]* 3.6 Escribir tests unitarios para `EmailSender`
-    - Usar mock de SMTP para verificar que el mensaje construido contiene las cabeceras `Reply-To`, `Date`, `Message-ID`
-    - Verificar que el nombre del adjunto es dinámico y coincide con `config.nombre_remitente`
-    - Verificar que el asunto espontáneo usa `config.nombre_remitente`
-    - _Requisitos: 2.1, 3.3, 4.1, 4.2, 4.4_
-
-- [x] 4. Checkpoint — Verificar correcciones de email
-  - Asegurar que todos los tests pasen. Consultar al usuario si hay dudas sobre el formato HTML mínimo esperado.
-
-- [x] 5. Corregir `core/job_filter.py` — clave de cooldown para empresas desconocidas
-  - [x] 5.1 Reemplazar la comparación `oferta.empresa != "No especificada"` por `oferta.empresa != "desconocida"`
-    - La clave de cooldown para ofertas anónimas debe ser `oferta.id` (no el nombre de empresa)
-    - Archivo: `core/job_filter.py`, método `filtrar`
-    - _Requisitos: 8.2, 8.4_
-
-  - [ ]* 5.2 Escribir test de propiedad para la lógica de cooldown de ofertas anónimas
-    - **Propiedad 1: Independencia de cooldown entre ofertas anónimas**
-    - Para cualquier par de ofertas con `empresa == "desconocida"` e `id` distintos, el bloqueo de una no debe afectar a la otra
-    - **Valida: Requisito 8.3**
-
-- [x] 6. Corregir `scrapers/computrabajo.py` — valor estándar para empresa desconocida
-  - [x] 6.1 Reemplazar todas las ocurrencias de `"No especificada"` por `"desconocida"` en `scrapers/computrabajo.py`
-    - Afecta la asignación inicial `empresa = "No especificada"` y la comparación `if empresa == "No especificada"`
-    - Archivo: `scrapers/computrabajo.py`, método `_parse_listado`
-    - _Requisitos: 8.4_
-
-  - [ ]* 6.2 Escribir test unitario para verificar que el campo `empresa` nunca toma el valor `"No especificada"`
-    - Parsear HTML de muestra y verificar que el campo `empresa` es `"desconocida"` cuando no se identifica la empresa
-    - _Requisitos: 8.4_
-
-- [x] 7. Limpiar e implementar `scrapers/bumeran.py`
-  - [x] 7.1 Eliminar los métodos muertos `_parse_listado`, `_parse_fecha` y `_generar_id` de `scrapers/bumeran.py`
-    - Estos métodos retornan siempre valores vacíos y no son invocados desde ningún otro componente
+- [ ] 1. Eliminar componentes obsoletos
+  - [ ] 1.1 Eliminar `core/fallback.py`
+    - Borrar el archivo del repositorio
     - _Requisitos: 9.1_
 
-  - [x] 7.2 Implementar el método `scrape()` real en `scrapers/bumeran.py` usando Selenium headless
-    - Inicializar `webdriver.Chrome` con opciones headless (`--headless`, `--no-sandbox`, `--disable-dev-shm-usage`)
-    - URL de búsqueda: `https://www.bumeran.com.ar/empleos-san-francisco-cordoba.html`
-    - Esperar a que carguen los resultados (usar `WebDriverWait` o `time.sleep` con valor razonable)
-    - Parsear el HTML resultante con `BeautifulSoup` para extraer título, empresa, URL de oferta
-    - Construir objetos `JobOffer` con `portal_origen="bumeran"` y `empresa="desconocida"` cuando no se identifique
-    - Manejar excepciones: registrar error en log y retornar lista vacía sin interrumpir el proceso
-    - Cerrar el driver en bloque `finally`
-    - _Requisitos: 6.1, 6.3, 6.4, 6.5_
-
-  - [ ]* 7.3 Escribir test unitario para `ScraperBumeran.scrape()` con mock de Selenium
-    - Verificar que ante un error de WebDriver se retorna lista vacía y se registra el error
-    - _Requisitos: 6.4, 6.5_
-
-- [x] 8. Limpiar e implementar `scrapers/zonajobs.py`
-  - [x] 8.1 Eliminar los métodos muertos `_parse_listado`, `_parse_fecha` y `_generar_id` de `scrapers/zonajobs.py`
-    - Misma razón que en bumeran: retornan valores vacíos y no son invocados
+  - [ ] 1.2 Eliminar `data/local_companies.json`
+    - Borrar el archivo del repositorio
     - _Requisitos: 9.2_
 
-  - [x] 8.2 Implementar el método `scrape()` real en `scrapers/zonajobs.py` usando Selenium headless
-    - Inicializar `webdriver.Chrome` con las mismas opciones headless que en bumeran
-    - URL de búsqueda: `https://www.zonajobs.com.ar/empleos-en-san-francisco-cordoba.html`
-    - Esperar carga de resultados, parsear con `BeautifulSoup`, construir objetos `JobOffer` con `portal_origen="zonajobs"`
+  - [ ] 1.3 Eliminar `scrapers/bumeran.py` y `scrapers/zonajobs.py`
+    - Borrar ambos archivos del repositorio
+    - _Requisitos: 9.3_
+
+  - [ ] 1.4 Eliminar templates de email de postulación no utilizados
+    - Borrar `templates/asunto_oferta.txt`, `templates/cuerpo_oferta.txt`, `templates/cuerpo_espontaneo.txt`
+    - Conservar `templates/reporte_diario.txt`
+    - _Requisitos: 9.4_
+
+- [ ] 2. Actualizar `config.py` — agregar credenciales de Computrabajo
+  - [ ] 2.1 Agregar `COMPUTRABAJO_EMAIL` y `COMPUTRABAJO_PASSWORD` leídos desde variables de entorno
+    - Agregar `MAX_POSTULACIONES_DIA = int(os.getenv("MAX_POSTULACIONES_DIA") or "7")`
+    - Eliminar variables obsoletas: `RUTA_EMPRESAS_LOCALES`, `MAX_FALLBACK_POR_DIA`, `MINIMO_ENVIOS_DIARIOS`, `DELAY_ENTRE_FALLBACK`
+    - _Requisitos: 1.1, 5.4_
+
+- [ ] 3. Crear `core/computrabajo_applicant.py`
+  - [ ] 3.1 Implementar `__init__` con inicialización del driver Chrome headless
+    - Opciones: `--headless`, `--no-sandbox`, `--disable-dev-shm-usage`, `--disable-gpu`
+    - Recibir `email` y `password` como parámetros (leídos desde Config en main.py)
+    - _Requisitos: 1.1, 1.5_
+
+  - [ ] 3.2 Implementar método `login() -> bool`
+    - Navegar a la página de login de ar.computrabajo.com
+    - Completar campos email y password, hacer clic en submit
+    - Verificar redirección exitosa (URL no contiene `/login`)
+    - Reintentar una vez con delay de 30s si falla por bloqueo temporal
+    - Retornar False y loguear error crítico si falla definitivamente
+    - _Requisitos: 1.2, 1.3, 1.4_
+
+  - [ ] 3.3 Implementar método `buscar_ofertas() -> list[JobOffer]`
+    - Navegar a la URL de búsqueda filtrada por San Francisco, Córdoba
+    - Extraer título, empresa, URL de cada oferta del listado
     - Usar `"desconocida"` cuando no se identifique la empresa
-    - Manejar excepciones: registrar error en log y retornar lista vacía
+    - Seguir paginación hasta max 5 páginas
+    - Retornar lista vacía con log informativo si no hay resultados
+    - _Requisitos: 2.1, 2.2, 2.3, 2.4, 2.5_
+
+  - [ ] 3.4 Implementar método `postularse(oferta: JobOffer) -> bool`
+    - Navegar a `oferta.url_oferta`
+    - Localizar y hacer clic en el botón "Postularme"
+    - Confirmar que la postulación fue registrada (cambio en el botón o mensaje de confirmación)
+    - Retornar False con log si el botón no existe o la oferta está cerrada
+    - _Requisitos: 4.1, 4.2, 4.3_
+
+  - [ ] 3.5 Implementar método `cerrar() -> None`
+    - Llamar a `driver.quit()` para cerrar el browser
+    - _Requisitos: 1.5_
+
+- [ ] 4. Actualizar `main.py` — nuevo flujo de postulación
+  - [ ] 4.1 Reemplazar la lógica de scraping multi-portal por el flujo de ComputrabajoApplicant
+    - Importar y usar `ComputrabajoApplicant` en lugar de `ScraperComputrabajo`, `ScraperBumeran`, `ScraperZonaJobs`
+    - Eliminar imports de `LocalCompanyFallback` y scrapers obsoletos
+    - _Requisitos: 9.3, 9.4_
+
+  - [ ] 4.2 Implementar el ciclo de postulación con límite de 7 por día
+    - Login → buscar ofertas → filtrar → postularse hasta MAX_POSTULACIONES_DIA
+    - Registrar cada postulación en historial con `tipo="postulacion_computrabajo"`
+    - Aplicar delay aleatorio de 3-8s entre postulaciones
     - Cerrar el driver en bloque `finally`
-    - _Requisitos: 6.2, 6.3, 6.4, 6.5_
+    - _Requisitos: 4.4, 4.5, 5.1, 5.2, 5.3_
 
-  - [ ]* 8.3 Escribir test unitario para `ScraperZonaJobs.scrape()` con mock de Selenium
-    - Verificar que ante un error de WebDriver se retorna lista vacía y se registra el error
-    - _Requisitos: 6.4, 6.5_
+  - [ ] 4.3 Mantener el envío del reporte diario al finalizar el ciclo
+    - Pasar la lista de postulaciones realizadas al `Reporter`
+    - Incluir motivo si no hubo postulaciones
+    - _Requisitos: 7.1, 7.2, 7.3_
 
-- [x] 9. Actualizar `requirements.txt` — agregar `selenium`
-  - [x] 9.1 Agregar `selenium>=4.15.0` a `requirements.txt` si no está presente
-    - Verificar que no haya duplicados
-    - Archivo: `requirements.txt`
-    - _Requisitos: 6.3_
+- [ ] 5. Actualizar `.github/workflows/daily.yml`
+  - [ ] 5.1 Agregar `COMPUTRABAJO_EMAIL` y `COMPUTRABAJO_PASSWORD` como variables de entorno en el step "Run job search"
+    - Leer desde `${{ secrets.COMPUTRABAJO_EMAIL }}` y `${{ secrets.COMPUTRABAJO_PASSWORD }}`
+    - Agregar `MAX_POSTULACIONES_DIA: "7"`
+    - Eliminar variables obsoletas: `RUTA_EMPRESAS_LOCALES`, `MAX_FALLBACK_POR_DIA`, `MINIMO_ENVIOS_DIARIOS`, `DELAY_ENTRE_FALLBACK`
+    - _Requisitos: 8.5_
 
-- [x] 10. Checkpoint final — Verificar integridad del sistema
-  - Asegurar que todos los tests pasen y que no quede ninguna ocurrencia de `"Eyla Bohr"` ni `"No especificada"` en archivos `.py`
-  - Consultar al usuario si hay dudas antes de cerrar.
+  - [ ] 5.2 Eliminar el step "Verify CV exists" si el CV ya no es necesario en el runner
+    - El CV está cargado en Computrabajo; el runner no necesita el archivo local para postularse
+    - Conservar `assets/cv.pdf` en el repo solo como respaldo
+    - _Requisitos: 8.2_
+
+- [ ] 6. Actualizar `requirements.txt`
+  - [ ] 6.1 Verificar que `selenium>=4.15.0` esté presente
+    - Eliminar dependencias no utilizadas si las hay
+    - _Requisitos: 8.2_
+
+- [ ] 7. Checkpoint final — Verificar integridad del sistema
+  - Confirmar que `main.py` no importa ningún componente eliminado
+  - Confirmar que `config.py` tiene las nuevas variables y no las obsoletas
+  - Confirmar que el workflow tiene los secrets correctos documentados
+  - Ejecutar `pytest` para verificar que los tests existentes siguen pasando
 
 ## Notas
 
-- Las tareas marcadas con `*` son opcionales y pueden omitirse para un MVP más rápido
-- El orden de las tareas respeta dependencias: los cambios de valor estándar (`"desconocida"`) deben hacerse en `job_filter.py` y `computrabajo.py` antes de implementar los scrapers nuevos, para que todos usen el mismo valor
-- Los scrapers de Bumeran y ZonaJobs requieren que `selenium` esté en `requirements.txt` (tarea 9) antes de ejecutarse en producción
-- ChromeDriver es gestionado automáticamente por `selenium-manager` (incluido en Selenium 4.6+), no requiere instalación manual
+- El orden de las tareas es importante: eliminar primero (tarea 1) evita referencias rotas al actualizar main.py (tarea 4)
+- El driver de Chrome es gestionado por `selenium-manager` (Selenium 4.6+); no requiere instalación manual de ChromeDriver
+- GitHub Actions ya instala Chromium en el runner de Ubuntu (step existente en daily.yml)
+- El historial.db se persiste como artifact entre ejecuciones; el cooldown de 20 días funciona correctamente siempre que el artifact se descargue al inicio de cada run

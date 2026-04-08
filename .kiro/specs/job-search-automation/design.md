@@ -2,19 +2,9 @@
 
 ## Descripción General
 
-Sistema automatizado que busca ofertas laborales diariamente en portales gratuitos filtrando por San Francisco, Córdoba, Argentina, y envía el CV del usuario de forma automática. Incluye control anti-spam con cooldown de 20 días por empresa, fallback de envío directo a empresas locales cuando no hay ofertas en portales, y registro completo del historial de envíos.
+Sistema automatizado que se postula directamente a ofertas laborales en ar.computrabajo.com usando Selenium con login real. El sistema inicia sesión con las credenciales del usuario, busca ofertas en "San Francisco, Córdoba", hace clic en "Postularme" en cada oferta elegible (respetando cooldown de 20 días y blacklist), y envía un reporte diario por email con el resumen de postulaciones. El CV ya está cargado en el perfil de Computrabajo; Selenium solo ejecuta el clic de postulación.
 
-El sistema corre en Windows como tarea programada, está construido en Python (más adecuado que Java para scraping web y automatización de emails, completamente gratuito y open source), y no depende de ninguna API paga.
-
-### Por qué Python en lugar de Java
-
-| Criterio | Python | Java |
-|---|---|---|
-| Scraping web | `requests` + `BeautifulSoup` / `Selenium` — ecosistema maduro | HtmlUnit / Jsoup — funcional pero más verboso |
-| Envío de emails | `smtplib` nativo en stdlib | JavaMail — dependencia externa |
-| Base de datos local | `sqlite3` nativo en stdlib | JDBC + driver externo |
-| Tarea programada Windows | Script `.py` directo en Task Scheduler | Requiere JAR + JVM configurada |
-| Curva de aprendizaje para automatización | Baja | Media-alta |
+El sistema corre en GitHub Actions con ejecución diaria automática.
 
 ---
 
@@ -22,28 +12,22 @@ El sistema corre en Windows como tarea programada, está construido en Python (m
 
 ```mermaid
 graph TD
-    TS[Windows Task Scheduler\nEjecución diaria] --> MAIN[main.py\nOrquestador principal]
+    GA[GitHub Actions\nEjecución diaria] --> MAIN[main.py\nOrquestador principal]
 
-    MAIN --> SCRAPER[JobScraper\nBúsqueda en portales]
-    MAIN --> FILTER[JobFilter\nFiltrado y deduplicación]
-    MAIN --> SENDER[EmailSender\nEnvío de CV]
+    MAIN --> APPLICANT[ComputrabajoApplicant\nLogin + Postulación Selenium]
+    MAIN --> FILTER[JobFilter\nFiltrado por cooldown y blacklist]
     MAIN --> HISTORY[HistoryManager\nRegistro SQLite]
-    MAIN --> FALLBACK[LocalCompanyFallback\nEmpresas locales]
+    MAIN --> REPORTER[Reporter\nReporte diario por email]
 
-    SCRAPER --> COMPUTRABAJO[ScraperComputrabajo]
-    SCRAPER --> LINKEDIN[ScraperLinkedIn]
-    SCRAPER --> BUSCAREMP[ScraperBuscarEmpleo]
+    APPLICANT --> SELENIUM[Selenium + Chrome headless\nar.computrabajo.com]
+    APPLICANT --> HISTORY
 
     FILTER --> HISTORY
     FILTER --> BLACKLIST[blacklist.txt\nEmpresas excluidas]
 
-    SENDER --> SMTP[SMTP Gmail/Outlook\nGratuito]
-    SENDER --> CV[cv.pdf\nArchivo del CV]
+    REPORTER --> EMAILSENDER[EmailSender\nSMTP Gmail]
 
-    FALLBACK --> LOCALDB[local_companies.json\nBase de datos local]
-    FALLBACK --> HISTORY
-
-    HISTORY --> SQLITE[(historial.db\nSQLite local)]
+    HISTORY --> SQLITE[(historial.db\nSQLite — artifact GitHub Actions)]
 ```
 
 ---
@@ -52,42 +36,32 @@ graph TD
 
 ```mermaid
 sequenceDiagram
-    participant TS as Task Scheduler
+    participant GA as GitHub Actions
     participant MAIN as Orquestador
-    participant SCRAPER as JobScraper
+    participant APP as ComputrabajoApplicant
     participant FILTER as JobFilter
     participant HISTORY as HistoryManager
-    participant SENDER as EmailSender
-    participant FALLBACK as LocalCompanyFallback
+    participant REPORTER as Reporter
 
-    TS->>MAIN: ejecutar (diariamente)
-    MAIN->>SCRAPER: buscar_ofertas(ciudad="San Francisco, Córdoba")
-    SCRAPER-->>MAIN: lista[JobOffer]
+    GA->>MAIN: ejecutar (diariamente 11:00 AM Argentina)
+    MAIN->>APP: login(email, password)
+    APP-->>MAIN: sesión iniciada
 
-    MAIN->>FILTER: filtrar(ofertas, blacklist)
-    FILTER->>HISTORY: consultar_cooldown(empresa, 20 días)
-    HISTORY-->>FILTER: empresas habilitadas
-    FILTER-->>MAIN: lista[JobOffer] filtrada
+    MAIN->>APP: buscar_ofertas("San Francisco, Córdoba")
+    APP-->>MAIN: lista[JobOffer]
 
-    alt Hay ofertas disponibles
-        loop Por cada oferta
-            MAIN->>SENDER: enviar_cv(oferta)
-            SENDER-->>MAIN: resultado (éxito/error)
-            MAIN->>HISTORY: registrar_envio(oferta, resultado)
-        end
-    else No hay ofertas
-        MAIN->>FALLBACK: obtener_empresas_locales()
-        FALLBACK->>HISTORY: consultar_cooldown(empresa, 20 días)
-        HISTORY-->>FALLBACK: empresas habilitadas
-        FALLBACK-->>MAIN: lista[LocalCompany]
-        loop Por cada empresa local
-            MAIN->>SENDER: enviar_cv_directo(empresa)
-            SENDER-->>MAIN: resultado
-            MAIN->>HISTORY: registrar_envio(empresa, resultado)
-        end
+    MAIN->>FILTER: filtrar(ofertas)
+    FILTER->>HISTORY: esta_en_cooldown(empresa, 20 días)
+    HISTORY-->>FILTER: estado cooldown
+    FILTER-->>MAIN: lista[JobOffer] elegibles
+
+    loop Hasta 7 postulaciones exitosas
+        MAIN->>APP: postularse(oferta)
+        APP-->>MAIN: éxito/error
+        MAIN->>HISTORY: registrar_envio(oferta, "postulado")
     end
 
-    MAIN->>MAIN: generar_reporte_diario()
+    MAIN->>REPORTER: enviar_reporte(postulaciones_del_dia)
 ```
 
 ---
@@ -99,39 +73,27 @@ sequenceDiagram
 ```python
 @dataclass
 class JobOffer:
-    id: str                  # hash único: empresa+puesto+fecha
+    id: str                  # hash único: empresa+puesto+url
     titulo: str
-    empresa: str
-    email_contacto: str | None
+    empresa: str             # "desconocida" si no se identifica
     url_oferta: str
-    portal_origen: str       # "computrabajo" | "linkedin" | "buscaremp"
+    portal_origen: str       # siempre "computrabajo"
     fecha_publicacion: date
-    descripcion: str
-    ciudad: str              # siempre "San Francisco, Córdoba"
+    ciudad: str              # "San Francisco, Córdoba"
+    categoria: str | None
 ```
 
-### 2. LocalCompany — Empresa local para fallback
-
-```python
-@dataclass
-class LocalCompany:
-    nombre: str
-    email: str
-    rubro: str
-    direccion: str | None
-```
-
-### 3. SendRecord — Registro de envío
+### 2. SendRecord — Registro de postulación
 
 ```python
 @dataclass
 class SendRecord:
-    id: int
+    id: int | None
     empresa: str
-    email_destino: str
+    email_destino: str       # "postulacion_directa" para Computrabajo
     fecha_envio: date
-    tipo: str        # "oferta_portal" | "empresa_local"
-    estado: str      # "enviado" | "error" | "omitido"
+    tipo: str                # "postulacion_computrabajo"
+    estado: str              # "postulado" | "error" | "omitido"
     url_oferta: str | None
     notas: str | None
 ```
@@ -141,213 +103,145 @@ class SendRecord:
 ## Estructura de Base de Datos (SQLite)
 
 ```sql
--- historial.db
+-- historial.db (sin cambios de esquema respecto al diseño anterior)
 
-CREATE TABLE envios (
+CREATE TABLE IF NOT EXISTS envios (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     empresa       TEXT    NOT NULL,
-    email_destino TEXT    NOT NULL,
-    fecha_envio   TEXT    NOT NULL,  -- ISO 8601: YYYY-MM-DD
-    tipo          TEXT    NOT NULL,  -- 'oferta_portal' | 'empresa_local'
-    estado        TEXT    NOT NULL,  -- 'enviado' | 'error' | 'omitido'
+    email_destino TEXT    NOT NULL,   -- "postulacion_directa"
+    fecha_envio   TEXT    NOT NULL,   -- ISO 8601: YYYY-MM-DD
+    tipo          TEXT    NOT NULL,   -- "postulacion_computrabajo"
+    estado        TEXT    NOT NULL,   -- "postulado" | "error" | "omitido"
     url_oferta    TEXT,
     notas         TEXT
 );
-
-CREATE INDEX idx_empresa_fecha ON envios (empresa, fecha_envio);
 ```
 
-**Regla de cooldown**: una empresa está bloqueada si existe un registro con `estado = 'enviado'` y `fecha_envio >= hoy - 20 días`.
+**Regla de cooldown**: una empresa está bloqueada si existe un registro con `estado = 'postulado'` y `fecha_envio >= hoy - 20 días`.
 
 ---
 
-## Componentes Principales — Firmas y Especificaciones
-
-### JobScraper
+## Módulo Principal: ComputrabajoApplicant
 
 ```python
-class JobScraper:
-    def __init__(self, ciudad: str = "San Francisco, Córdoba"):
-        """Inicializa scrapers individuales para cada portal."""
+class ComputrabajoApplicant:
+    BASE_URL = "https://ar.computrabajo.com"
+    SEARCH_URL = "https://ar.computrabajo.com/trabajo-en-san-francisco-cordoba"
+    MAX_POSTULACIONES_DIA = 7
+
+    def __init__(self, email: str, password: str):
+        """
+        Inicializa el driver Chrome headless.
+        Credenciales leídas desde variables de entorno (nunca hardcodeadas).
+        """
+
+    def login(self) -> bool:
+        """
+        Precondición: email y password no vacíos.
+        Postcondición: sesión iniciada en ar.computrabajo.com; retorna True si éxito.
+        Navega a la página de login, completa el formulario y verifica redirección exitosa.
+        """
 
     def buscar_ofertas(self) -> list[JobOffer]:
         """
-        Precondición: ciudad configurada y no vacía.
-        Postcondición: retorna lista (posiblemente vacía) de ofertas únicas.
-        Cada oferta tiene id único (hash). Errores de red se loguean y no
-        interrumpen el proceso (fail-soft por portal).
+        Precondición: sesión iniciada (login() retornó True).
+        Postcondición: retorna lista de ofertas encontradas en la búsqueda.
+        Navega a SEARCH_URL, extrae título, empresa, URL de cada oferta listada.
+        Sigue paginación hasta max_pages=5 o hasta que no haya más resultados.
         """
 
-class ScraperComputrabajo:
-    BASE_URL = "https://www.computrabajo.com.ar"
-
-    def scrape(self) -> list[JobOffer]:
+    def postularse(self, oferta: JobOffer) -> bool:
         """
-        Usa requests + BeautifulSoup.
-        URL: /empleos-en-san-francisco-cordoba
-        Extrae: título, empresa, fecha, URL de detalle.
-        Sigue paginación hasta max_pages=5.
-        Respeta robots.txt y agrega delay aleatorio entre requests (2-5s).
+        Precondición: sesión iniciada, oferta.url_oferta válida.
+        Postcondición: clic en "Postularme" ejecutado; retorna True si éxito.
+        Navega a la URL de la oferta, localiza el botón "Postularme" y hace clic.
+        Si el botón no existe (ya postulado, oferta cerrada), retorna False con log.
         """
 
-class ScraperLinkedIn:
-    def scrape(self) -> list[JobOffer]:
-        """
-        Usa Selenium (headless Chrome) para LinkedIn Jobs público.
-        Filtro: location="San Francisco, Córdoba, Argentina"
-        Sin login requerido (búsqueda pública).
-        Extrae hasta 25 resultados por ejecución.
-        """
-
-class ScraperBuscarEmpleo:
-    def scrape(self) -> list[JobOffer]:
-        """
-        Usa requests + BeautifulSoup.
-        Sitio: buscaremp.com.ar
-        Filtro por provincia Córdoba + ciudad San Francisco.
-        """
-```
-
-### JobFilter
-
-```python
-class JobFilter:
-    def __init__(self, history: HistoryManager, blacklist_path: str):
-        """
-        Carga blacklist desde archivo de texto (una empresa por línea).
-        Blacklist inicial incluye: "ZF Sachs S.A.", "ZF Sachs", "ZF".
-        """
-
-    def filtrar(self, ofertas: list[JobOffer]) -> list[JobOffer]:
-        """
-        Precondición: lista de ofertas válidas.
-        Postcondición: retorna ofertas donde:
-          - empresa NO está en blacklist (case-insensitive)
-          - empresa NO tiene envío en los últimos 20 días
-          - oferta tiene email_contacto o url_oferta válida
-        """
-
-    def _en_blacklist(self, empresa: str) -> bool:
-        """Comparación case-insensitive y por substring."""
-
-    def _en_cooldown(self, empresa: str) -> bool:
-        """Delega a HistoryManager.esta_en_cooldown()."""
-```
-
-### HistoryManager
-
-```python
-class HistoryManager:
-    def __init__(self, db_path: str = "data/historial.db"):
-        """Crea la base de datos y tabla si no existen."""
-
-    def esta_en_cooldown(self, empresa: str, dias: int = 20) -> bool:
-        """
-        Precondición: empresa no vacía, dias > 0.
-        Postcondición: True si existe envío exitoso en los últimos `dias` días.
-        Consulta: SELECT COUNT(*) WHERE empresa=? AND estado='enviado'
-                  AND fecha_envio >= date('now', '-N days')
-        """
-
-    def registrar_envio(self, record: SendRecord) -> None:
-        """
-        Precondición: record con campos obligatorios completos.
-        Postcondición: registro insertado en tabla envios.
-        """
-
-    def obtener_historial(self,
-                          desde: date | None = None,
-                          hasta: date | None = None) -> list[SendRecord]:
-        """Retorna registros filtrados por rango de fechas."""
-
-    def exportar_csv(self, ruta: str) -> None:
-        """Exporta historial completo a CSV para revisión manual."""
-```
-
-### EmailSender
-
-```python
-class EmailSender:
-    def __init__(self, config: EmailConfig):
-        """
-        EmailConfig contiene: smtp_host, smtp_port, usuario, password,
-        nombre_remitente, ruta_cv, asunto_template, cuerpo_template.
-        Credenciales leídas desde variables de entorno o archivo .env
-        (nunca hardcodeadas).
-        """
-
-    def enviar_cv(self, oferta: JobOffer) -> bool:
-        """
-        Precondición: oferta.email_contacto no es None.
-        Postcondición: email enviado con CV adjunto; retorna True si éxito.
-        Usa smtplib + MIME multipart.
-        Asunto personalizado con nombre empresa y puesto.
-        Adjunta cv.pdf desde ruta configurada.
-        """
-
-    def enviar_cv_directo(self, empresa: LocalCompany) -> bool:
-        """
-        Igual que enviar_cv pero para empresas locales sin oferta activa.
-        Asunto: "Presentación espontánea - [nombre]"
-        """
-
-    def _construir_mensaje(self,
-                           destinatario: str,
-                           asunto: str,
-                           cuerpo: str) -> MIMEMultipart:
-        """Construye mensaje MIME con texto y adjunto CV."""
-```
-
-### LocalCompanyFallback
-
-```python
-class LocalCompanyFallback:
-    def __init__(self, db_path: str = "data/local_companies.json",
-                 history: HistoryManager = None):
-        """Carga lista de empresas locales desde JSON."""
-
-    def obtener_empresas_habilitadas(self) -> list[LocalCompany]:
-        """
-        Precondición: archivo JSON existe y es válido.
-        Postcondición: retorna empresas que NO están en cooldown de 20 días
-        y NO están en blacklist.
-        Orden: aleatorio para distribuir envíos uniformemente.
-        """
+    def cerrar(self) -> None:
+        """Cierra el driver de Selenium. Llamar siempre en bloque finally."""
 ```
 
 ---
 
 ## Algoritmos Clave
 
-### Algoritmo de Scraping con Fail-Soft
+### Algoritmo de Login
 
 ```pascal
-PROCEDURE buscar_ofertas_todos_portales()
-  INPUT: lista de scrapers configurados
-  OUTPUT: lista consolidada de JobOffer
+PROCEDURE login(email, password)
+  INPUT: credenciales del usuario
+  OUTPUT: booleano (éxito/fallo)
 
   SEQUENCE
-    todas_ofertas ← lista vacía
+    driver.get("https://ar.computrabajo.com/candidate/login")
     
-    FOR cada scraper IN scrapers DO
-      TRY
-        ofertas ← scraper.scrape()
-        todas_ofertas ← todas_ofertas + ofertas
-        esperar(delay_aleatorio entre 3 y 8 segundos)
-      CATCH error DE RED O TIMEOUT
-        loguear("Portal no disponible: " + scraper.nombre)
-        CONTINUE  // no interrumpir por fallo de un portal
-      END TRY
-    END FOR
+    campo_email ← driver.find_element(By.NAME, "email")
+    campo_email.send_keys(email)
     
-    // Deduplicar por id (hash empresa+puesto)
-    resultado ← deduplicar(todas_ofertas)
-    RETURN resultado
+    campo_password ← driver.find_element(By.NAME, "password")
+    campo_password.send_keys(password)
+    
+    boton_login ← driver.find_element(By.TYPE, "submit")
+    boton_login.click()
+    
+    // Esperar redirección post-login
+    WebDriverWait(driver, 10).until(
+      URL_CONTAINS("/candidate/")
+    )
+    
+    IF "login" NOT IN driver.current_url THEN
+      RETURN True
+    ELSE
+      loguear("Login fallido: credenciales incorrectas o CAPTCHA")
+      RETURN False
+    END IF
   END SEQUENCE
 END PROCEDURE
 ```
 
-### Algoritmo de Cooldown 20 Días
+### Algoritmo de Postulación Diaria
+
+```pascal
+PROCEDURE ejecutar_postulaciones(max=7)
+  INPUT: máximo de postulaciones por día
+  OUTPUT: lista de postulaciones realizadas
+
+  SEQUENCE
+    postulaciones ← lista vacía
+    
+    ofertas_raw ← applicant.buscar_ofertas()
+    loguear("Ofertas encontradas: " + len(ofertas_raw))
+    
+    ofertas_elegibles ← filtro.filtrar(ofertas_raw)
+    loguear("Ofertas elegibles: " + len(ofertas_elegibles))
+    
+    FOR cada oferta IN ofertas_elegibles DO
+      IF len(postulaciones) >= max THEN
+        BREAK
+      END IF
+      
+      exito ← applicant.postularse(oferta)
+      
+      IF exito THEN
+        history.registrar_envio(oferta, estado="postulado")
+        postulaciones.agregar(oferta)
+        loguear("Postulado: " + oferta.titulo + " en " + oferta.empresa)
+        esperar(delay_aleatorio entre 3 y 8 segundos)
+      ELSE
+        history.registrar_envio(oferta, estado="error")
+        loguear("Error al postularse: " + oferta.url_oferta)
+      END IF
+    END FOR
+    
+    // Si hay menos de 7 ofertas disponibles, se postula a todas las disponibles
+    loguear("Postulaciones realizadas: " + len(postulaciones))
+    RETURN postulaciones
+  END SEQUENCE
+END PROCEDURE
+```
+
+### Algoritmo de Cooldown (sin cambios)
 
 ```pascal
 PROCEDURE esta_en_cooldown(empresa, dias=20)
@@ -359,56 +253,13 @@ PROCEDURE esta_en_cooldown(empresa, dias=20)
     
     count ← SQL(
       "SELECT COUNT(*) FROM envios
-       WHERE empresa = ? 
-       AND estado = 'enviado'
+       WHERE empresa = ?
+       AND estado = 'postulado'
        AND fecha_envio >= ?",
       empresa, fecha_limite
     )
     
     RETURN count > 0
-  END SEQUENCE
-END PROCEDURE
-```
-
-### Algoritmo Principal de Orquestación
-
-```pascal
-PROCEDURE ejecutar_ciclo_diario()
-  SEQUENCE
-    loguear("Inicio ciclo: " + ahora())
-    
-    // Fase 1: Scraping
-    ofertas_raw ← scraper.buscar_ofertas()
-    loguear("Ofertas encontradas: " + len(ofertas_raw))
-    
-    // Fase 2: Filtrado
-    ofertas_validas ← filtro.filtrar(ofertas_raw)
-    loguear("Ofertas habilitadas para envío: " + len(ofertas_validas))
-    
-    // Fase 3: Envío o Fallback
-    IF len(ofertas_validas) > 0 THEN
-      FOR cada oferta IN ofertas_validas DO
-        exito ← sender.enviar_cv(oferta)
-        estado ← "enviado" SI exito SINO "error"
-        history.registrar_envio(crear_record(oferta, estado))
-        esperar(delay_entre_envios: 30-60 segundos)
-      END FOR
-    ELSE
-      loguear("Sin ofertas. Activando fallback empresas locales.")
-      empresas ← fallback.obtener_empresas_habilitadas()
-      
-      // Limitar a máximo 10 envíos por día en fallback
-      empresas ← empresas[:10]
-      
-      FOR cada empresa IN empresas DO
-        exito ← sender.enviar_cv_directo(empresa)
-        estado ← "enviado" SI exito SINO "error"
-        history.registrar_envio(crear_record(empresa, estado))
-        esperar(delay_entre_envíos: 60-120 segundos)
-      END FOR
-    END IF
-    
-    loguear("Ciclo completado: " + ahora())
   END SEQUENCE
 END PROCEDURE
 ```
@@ -419,85 +270,80 @@ END PROCEDURE
 
 ```
 job-search-automation/
-├── main.py                    # Punto de entrada, orquestador
-├── config.py                  # Configuración centralizada
-├── .env                       # Credenciales SMTP (no commitear)
-├── run.bat                    # Script Windows para Task Scheduler
-│
-├── scrapers/
-│   ├── __init__.py
-│   ├── base_scraper.py        # Clase base abstracta
-│   ├── computrabajo.py
-│   ├── linkedin.py
-│   └── buscaremp.py
+├── main.py                          # Orquestador principal
+├── config.py                        # Configuración centralizada
+├── .env                             # Credenciales (no commitear)
 │
 ├── core/
 │   ├── __init__.py
-│   ├── models.py              # JobOffer, LocalCompany, SendRecord
-│   ├── job_filter.py
-│   ├── history_manager.py
-│   ├── email_sender.py
-│   └── fallback.py
+│   ├── models.py                    # JobOffer, SendRecord
+│   ├── computrabajo_applicant.py    # NUEVO: login + postulación Selenium
+│   ├── job_filter.py                # Filtrado por cooldown y blacklist
+│   ├── history_manager.py           # Registro SQLite
+│   ├── email_sender.py              # Solo para reporte diario
+│   └── reporter.py                  # Reporte diario por email
 │
 ├── data/
-│   ├── historial.db           # SQLite (generado automáticamente)
-│   ├── local_companies.json   # Base de datos empresas locales
-│   └── blacklist.txt          # Empresas excluidas
+│   ├── historial.db                 # SQLite (artifact GitHub Actions)
+│   └── blacklist.txt                # Empresas excluidas
 │
 ├── assets/
-│   └── cv.pdf                 # CV del usuario
+│   └── cv.pdf                       # CV (ya cargado en Computrabajo también)
 │
 ├── templates/
-│   ├── asunto_oferta.txt
-│   ├── cuerpo_oferta.txt
-│   └── cuerpo_espontaneo.txt
+│   └── reporte_diario.txt           # Template del reporte
+│
+├── .github/
+│   └── workflows/
+│       └── daily.yml                # GitHub Actions
 │
 └── logs/
-    └── app.log                # Rotación diaria
+    └── app.log
 ```
+
+**Archivos eliminados respecto al diseño anterior:**
+- `core/fallback.py` — sistema de fallback a empresas locales
+- `data/local_companies.json` — base de datos de empresas locales
+- `scrapers/bumeran.py` — scraper Bumeran
+- `scrapers/zonajobs.py` — scraper ZonaJobs
+- `templates/asunto_oferta.txt`, `cuerpo_oferta.txt`, `cuerpo_espontaneo.txt` — templates de email de postulación
 
 ---
 
-## Tecnologías Seleccionadas (todas gratuitas/open source)
+## Variables de Entorno y GitHub Secrets
 
-| Componente | Tecnología | Justificación |
-|---|---|---|
-| Lenguaje | Python 3.11+ | Ecosistema de scraping y automatización superior |
-| Scraping HTML | `requests` + `BeautifulSoup4` | Liviano, sin overhead de browser |
-| Scraping JS | `Selenium` + ChromeDriver | Para LinkedIn que requiere JS |
-| Base de datos | `SQLite` (stdlib) | Sin servidor, archivo local, suficiente para el volumen |
-| Email | `smtplib` + `email` (stdlib) | Nativo Python, sin dependencias externas |
-| Variables de entorno | `python-dotenv` | Manejo seguro de credenciales |
-| Logging | `logging` (stdlib) | Rotación de logs integrada |
-| Scheduling | Windows Task Scheduler | Nativo Windows, sin dependencias |
-| Dependencias totales externas | `requests`, `beautifulsoup4`, `selenium`, `python-dotenv` | Mínimas |
+```bash
+# .env (local, no commitear)
+COMPUTRABAJO_EMAIL=carabajalpabloezequiel@gmail.com
+COMPUTRABAJO_PASSWORD=<contraseña del usuario>
+
+# Credenciales SMTP para reporte diario
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=carabajalpabloezequiel@gmail.com
+SMTP_PASSWORD=<app password de Gmail>
+NOMBRE_REMITENTE=Pablo Ezequiel Carabajal
+CANDIDATO_EMAIL=carabajalpabloezequiel@gmail.com
+```
+
+**GitHub Secrets requeridos:**
+- `COMPUTRABAJO_EMAIL`
+- `COMPUTRABAJO_PASSWORD`
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`
+- `NOMBRE_REMITENTE`, `CANDIDATO_EMAIL`
 
 ---
 
-## Consideraciones Anti-Spam
+## Tecnologías
 
-### Técnicas de scraping responsable
-- User-Agent rotativo que simula navegador real
-- Delays aleatorios entre requests (2-5 segundos por página)
-- Respetar `robots.txt` de cada portal
-- Máximo 5 páginas de resultados por portal por ejecución
-- Ejecutar una sola vez por día (Task Scheduler)
-
-### Técnicas de envío de emails
-- Delay de 30-60 segundos entre envíos de ofertas
-- Delay de 60-120 segundos entre envíos de fallback
-- Máximo 10 envíos por día en modo fallback
-- Cooldown de 20 días por empresa (evita repetición)
-- Asunto y cuerpo personalizados por empresa (no genérico masivo)
-- Usar cuenta Gmail/Outlook dedicada para envíos (no la personal)
-- Configurar SPF/DKIM si se usa dominio propio
-
-### Blacklist inicial (`blacklist.txt`)
-```
-ZF Sachs S.A.
-ZF Sachs
-ZF Argentina
-```
+| Componente | Tecnología |
+|---|---|
+| Postulación | Selenium + Chrome headless |
+| Base de datos | SQLite (stdlib) |
+| Reporte diario | smtplib + email (stdlib) |
+| Variables de entorno | python-dotenv |
+| Scheduling | GitHub Actions (cron diario) |
+| CI/CD | GitHub Actions ubuntu-latest |
 
 ---
 
@@ -505,65 +351,36 @@ ZF Argentina
 
 | Escenario | Comportamiento |
 |---|---|
-| Portal de scraping no disponible | Log de advertencia, continúa con otros portales |
-| Email de oferta no encontrado | Registra como "omitido", continúa |
-| Fallo SMTP al enviar | Registra como "error", reintenta 1 vez con delay de 60s |
-| `historial.db` corrupto | Backup automático, recrea tabla vacía |
-| `local_companies.json` inválido | Log de error crítico, detiene fallback (no el proceso completo) |
-| ChromeDriver no instalado | Log de error, omite scraper LinkedIn, continúa con otros |
+| Login fallido (credenciales incorrectas) | Log de error crítico, detiene el ciclo, envía reporte con error |
+| Login fallido (CAPTCHA) | Log de advertencia, reintenta 1 vez con delay de 30s |
+| Botón "Postularme" no encontrado | Registra como "omitido", continúa con la siguiente oferta |
+| Oferta ya postulada anteriormente | Detectado por cooldown antes de navegar; omitida |
+| Error de red durante postulación | Registra como "error", continúa con la siguiente oferta |
+| ChromeDriver no disponible | Error crítico, detiene el ciclo |
+| Menos de 7 ofertas disponibles | Se postula a todas las disponibles sin error |
 
 ---
 
 ## Estrategia de Testing
 
 ### Unit Testing (`pytest`)
-- `test_cooldown`: verifica que empresas con envío reciente sean bloqueadas
-- `test_blacklist`: verifica exclusión de ZF Sachs y variantes
-- `test_deduplicacion`: verifica que ofertas duplicadas se eliminen
-- `test_email_builder`: verifica construcción correcta del mensaje MIME
+- `test_cooldown`: verifica que empresas con postulación reciente sean bloqueadas
+- `test_blacklist`: verifica exclusión de empresas en blacklist
+- `test_filtrado`: verifica que `JobFilter.filtrar()` combine correctamente cooldown y blacklist
 
 ### Property-Based Testing (`hypothesis`)
 - Propiedad: para cualquier empresa en blacklist, `filtrar()` nunca la incluye
-- Propiedad: para cualquier empresa con envío hace < 20 días, `esta_en_cooldown()` retorna True
-- Propiedad: `registrar_envio()` seguido de `esta_en_cooldown()` siempre retorna True
+- Propiedad: para cualquier empresa con postulación hace < 20 días, `esta_en_cooldown()` retorna True
 
 ### Testing de integración
-- Mock de SMTP para verificar envíos sin enviar emails reales
-- Mock de requests para verificar scraping sin acceder a internet
+- Mock de Selenium para verificar flujo de login y postulación sin acceder a internet
+- Mock de SMTP para verificar envío de reporte sin enviar emails reales
 
 ---
 
-## Configuración de Windows Task Scheduler
+## Consideraciones de Automatización Responsable
 
-`run.bat`:
-```bat
-@echo off
-cd /d C:\job-search-automation
-python main.py >> logs\app.log 2>&1
-```
-
-Configuración de la tarea:
-- Disparador: Diariamente a las 09:00 AM
-- Acción: ejecutar `run.bat`
-- Condición: solo si hay conexión a internet
-- Configuración: ejecutar aunque el usuario no esté logueado
-
----
-
-## Dependencias Externas
-
-```
-requests>=2.31.0
-beautifulsoup4>=4.12.0
-selenium>=4.15.0
-python-dotenv>=1.0.0
-pytest>=7.4.0          # solo desarrollo
-hypothesis>=6.88.0     # solo desarrollo
-```
-
-Instalación:
-```
-pip install requests beautifulsoup4 selenium python-dotenv
-```
-
-ChromeDriver: descargado automáticamente por `selenium-manager` (incluido en Selenium 4.6+).
+- Delay aleatorio de 3-8 segundos entre postulaciones para no sobrecargar el servidor
+- Máximo 7 postulaciones por día (límite conservador)
+- Cooldown de 20 días por empresa evita postulaciones repetidas
+- El sistema no crea cuentas ni realiza acciones fuera del flujo normal de un usuario

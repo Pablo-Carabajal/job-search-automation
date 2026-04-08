@@ -5,16 +5,12 @@ import random
 from datetime import date
 
 from config import Config
-from core.models import JobOffer, LocalCompany, SendRecord, EmailConfig
+from core.models import JobOffer, SendRecord, EmailConfig
 from core.history_manager import HistoryManager
 from core.job_filter import JobFilter
 from core.email_sender import EmailSender
-from core.fallback import LocalCompanyFallback
+from core.computrabajo_applicant import ComputrabajoApplicant
 from core.reporter import Reporter
-
-from scrapers.computrabajo import ScraperComputrabajo
-from scrapers.bumeran import ScraperBumeran
-from scrapers.zonajobs import ScraperZonaJobs
 
 
 def setup_logging():
@@ -28,48 +24,13 @@ def setup_logging():
     )
 
 
-def buscar_ofertas_todos_portales() -> list[JobOffer]:
-    logging.info("Iniciando búsqueda de ofertas en portales...")
-    
-    scrapers = [
-        ScraperComputrabajo(),
-        ScraperBumeran(),
-        ScraperZonaJobs()
-    ]
-    
-    todas_ofertas = []
-    
-    for scraper in scrapers:
-        try:
-            logging.info(f"Scraping {scraper.__class__.__name__}...")
-            ofertas = scraper.scrape()
-            logging.info(f"{scraper.__class__.__name__}: {len(ofertas)} ofertas encontradas")
-            todas_ofertas.extend(ofertas)
-        except Exception as e:
-            logging.warning(f"Error en {scraper.__class__.__name__}: {e}")
-        
-        delay = random.uniform(3, 8)
-        logging.debug(f"Esperando {delay:.1f}s antes del siguiente scraper...")
-        time.sleep(delay)
-    
-    seen_ids = set()
-    ofertas_unicas = []
-    for oferta in todas_ofertas:
-        if oferta.id not in seen_ids:
-            seen_ids.add(oferta.id)
-            ofertas_unicas.append(oferta)
-    
-    logging.info(f"Total ofertas únicas: {len(ofertas_unicas)}")
-    return ofertas_unicas
-
-
 def ejecutar_ciclo_diario():
     logging.info("=" * 50)
     logging.info(f"Inicio ciclo: {date.today()}")
-    
+
     history = HistoryManager(Config.RUTA_HISTORIAL)
     filtro = JobFilter(history, Config.RUTA_BLACKLIST)
-    
+
     email_config = EmailConfig(
         smtp_host=Config.SMTP_HOST,
         smtp_port=Config.SMTP_PORT,
@@ -77,109 +38,109 @@ def ejecutar_ciclo_diario():
         password=Config.SMTP_PASSWORD,
         nombre_remitente=Config.NOMBRE_REMITENTE,
         ruta_cv=str(Config.RUTA_CV),
-        asunto_template=Config.ASUNTO_OFERTA_TEMPLATE,
-        cuerpo_template=Config.CUERPO_OFERTA_TEMPLATE,
-        cuerpo_espontaneo_template=Config.CUERPO_ESPONTANEO_TEMPLATE
+        asunto_template="",
+        cuerpo_template="",
+        cuerpo_espontaneo_template=""
     )
-    sender = EmailSender(email_config)
-    
-    ofertas_raw = buscar_ofertas_todos_portales()
-    logging.info(f"Ofertas encontradas: {len(ofertas_raw)}")
-    
-    ofertas_validas = filtro.filtrar(ofertas_raw, Config.CATEGORIAS)
-    logging.info(f"Ofertas habilitadas para envío: {len(ofertas_validas)}")
-    
-    MINIMO_ENVIOS_DIARIOS = Config.MINIMO_ENVIOS_DIARIOS
-    envios_exitosos = 0
-    envios_error = 0
-    ofertas_sin_email = 0
+    reporter = Reporter(history, email_config)
 
-    # --- Fase 1: enviar a ofertas de portales que tengan email ---
-    for oferta in ofertas_validas:
-        logging.info(f"Procesando oferta: {oferta.titulo} en {oferta.empresa}")
+    applicant = None
+    postulaciones = []
+    ofertas = []
+    max_postulaciones = Config.MAX_POSTULACIONES_DIA
 
-        if not oferta.email_contacto:
-            ofertas_sin_email += 1
-            record = SendRecord(
-                empresa=oferta.empresa if oferta.empresa != "desconocida" else oferta.id,
-                email_destino="sin_email",
-                fecha_envio=date.today(),
-                tipo="oferta_portal",
-                estado="omitido",
-                url_oferta=oferta.url_oferta,
-                notas=f"Sin email de contacto. Portal: {oferta.portal_origen}"
+    try:
+        applicant = ComputrabajoApplicant(
+            Config.COMPUTRABAJO_EMAIL,
+            Config.COMPUTRABAJO_PASSWORD
+        )
+
+        if not applicant.login():
+            logging.error("No se pudo iniciar sesión en Computrabajo")
+            reporter.enviar_reporte(
+                Config.CANDIDATO_EMAIL,
+                date.today(),
+                0, 0, [],
+                "No se pudo iniciar sesión en Computrabajo. Revisar credenciales."
             )
-            history.registrar_envio(record)
-            continue
+            return
 
-        exito = sender.enviar_cv(oferta, oferta.email_contacto)
-        clave_empresa = oferta.empresa if oferta.empresa != "desconocida" else oferta.id
-        estado = "enviado" if exito else "error"
-        record = SendRecord(
-            empresa=clave_empresa,
-            email_destino=oferta.email_contacto,
-            fecha_envio=date.today(),
-            tipo="oferta_portal",
-            estado=estado,
-            url_oferta=oferta.url_oferta,
-            notas=f"Portal: {oferta.portal_origen}"
-        )
-        history.registrar_envio(record)
-        if exito:
-            envios_exitosos += 1
-        else:
-            envios_error += 1
+        ofertas = applicant.buscar_ofertas()
+        logging.info(f"Ofertas encontradas: {len(ofertas)}")
 
-        delay = random.uniform(Config.DELAY_ENTRE_ENVIOS - 15, Config.DELAY_ENTRE_ENVIOS + 15)
-        time.sleep(delay)
+        ofertas_filtradas = filtro.filtrar(ofertas, Config.CATEGORIAS)
+        logging.info(f"Ofertas habilitadas para postulación: {len(ofertas_filtradas)}")
 
-    logging.info(f"Fase portales: {envios_exitosos} enviados, {ofertas_sin_email} sin email de contacto")
+        max_postulaciones = Config.MAX_POSTULACIONES_DIA
+        postuladas_hoy = 0
 
-    # --- Fase 2: fallback siempre que no se alcance el mínimo diario ---
-    faltantes = MINIMO_ENVIOS_DIARIOS - envios_exitosos
-    if faltantes > 0:
-        logging.info(
-            f"Envíos exitosos ({envios_exitosos}) < mínimo ({MINIMO_ENVIOS_DIARIOS}). "
-            f"Activando fallback para completar {faltantes} envíos..."
-        )
-        fallback = LocalCompanyFallback(Config.RUTA_EMPRESAS_LOCALES, history)
-        empresas = fallback.obtener_empresas_habilitadas(faltantes)
-        logging.info(f"Empresas locales habilitadas para fallback: {len(empresas)}")
+        for oferta in ofertas_filtradas:
+            if postuladas_hoy >= max_postulaciones:
+                logging.info(f"Límite de {max_postulaciones} postulaciones alcanzado")
+                break
 
-        for empresa in empresas:
-            logging.info(f"Enviando a empresa local: {empresa.nombre}")
-            exito = sender.enviar_cv_directo(empresa)
-            estado = "enviado" if exito else "error"
+            exito = applicant.postularse(oferta)
+
+            clave_empresa = oferta.empresa if oferta.empresa != "desconocida" else oferta.id
+            estado = "postulado" if exito else "error"
             record = SendRecord(
-                empresa=empresa.nombre,
-                email_destino=empresa.email,
+                empresa=clave_empresa,
+                email_destino="computrabajo",
                 fecha_envio=date.today(),
-                tipo="empresa_local",
+                tipo="postulacion_computrabajo",
                 estado=estado,
-                notas=f"Rubro: {empresa.rubro}"
+                url_oferta=oferta.url_oferta,
+                notas=f"Puesto: {oferta.titulo}"
             )
             history.registrar_envio(record)
+
             if exito:
-                envios_exitosos += 1
+                postulaciones.append(record)
+                postuladas_hoy += 1
+                logging.info(f"Postulado a: {oferta.titulo} en {oferta.empresa}")
             else:
-                envios_error += 1
+                logging.warning(f"Error al postular a: {oferta.titulo}")
 
-            delay = random.uniform(Config.DELAY_ENTRE_FALLBACK - 30, Config.DELAY_ENTRE_FALLBACK + 30)
-            time.sleep(delay)
-    else:
-        logging.info(f"Mínimo diario alcanzado con envíos de portales ({envios_exitosos}). No se activa fallback.")
+            if postuladas_hoy < max_postulaciones:
+                delay = random.uniform(3, 8)
+                logging.debug(f"Esperando {delay:.1f}s antes de la siguiente postulación...")
+                time.sleep(delay)
 
-    logging.info(f"Ciclo completado. Éxitos: {envios_exitosos}, Errores: {envios_error}, Sin email: {ofertas_sin_email}")
-    logging.info("=" * 50)
+        logging.info(f"Ciclo completado. Postulaciones: {len(postulaciones)}")
+
+    except Exception as e:
+        logging.error(f"Error en ciclo principal: {e}", exc_info=True)
+    finally:
+        if applicant:
+            applicant.cerrar()
+
+    envios_exitosos = len(postulaciones)
+    envios_error = 0
+    motivo = None
+
+    if envios_exitosos == 0:
+        if not ofertas:
+            motivo = "No se encontraron ofertas disponibles"
+        else:
+            motivo = f"Límite de {max_postulaciones} postulaciones alcanzado sin errores"
+
+    reporter.enviar_reporte(
+        Config.CANDIDATO_EMAIL,
+        date.today(),
+        envios_exitosos,
+        envios_error,
+        postulaciones,
+        motivo
+    )
 
 
 def main():
     setup_logging()
-    
+
     try:
         ejecutar_ciclo_diario()
     except Exception as e:
-        logging.error(f"Error en ciclo principal: {e}", exc_info=True)
+        logging.error(f"Error fatal: {e}", exc_info=True)
         sys.exit(1)
 
 

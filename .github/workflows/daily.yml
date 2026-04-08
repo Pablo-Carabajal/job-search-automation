@@ -42,15 +42,6 @@ jobs:
           path: data/
         continue-on-error: true
 
-      - name: Verify CV exists
-        run: |
-          if [ ! -f "assets/cv.pdf" ]; then
-            echo "ERROR: assets/cv.pdf no encontrado en el repositorio."
-            echo "Debes commitear el archivo assets/cv.pdf para que el sistema funcione."
-            exit 1
-          fi
-          echo "CV encontrado: $(ls -lh assets/cv.pdf)"
-
       - name: Run job search
         env:
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
@@ -61,15 +52,12 @@ jobs:
           CANDIDATO_EMAIL: ${{ secrets.CANDIDATO_EMAIL }}
           RUTA_CV: assets/cv.pdf
           RUTA_HISTORIAL: data/historial.db
-          RUTA_EMPRESAS_LOCALES: data/local_companies.json
           RUTA_BLACKLIST: data/blacklist.txt
           COOLDOWN_DIAS: "20"
-          MAX_FALLBACK_POR_DIA: "10"
-          MINIMO_ENVIOS_DIARIOS: "10"
-          DELAY_ENTRE_ENVIOS: "45"
-          DELAY_ENTRE_FALLBACK: "90"
-          MAX_PAGINAS_PORTAL: "5"
+          MAX_POSTULACIONES_DIA: "7"
           CATEGORIAS: "Producción / Operarios / Manufactura,Administración / Oficina,Almacén / Logística / Transporte,Ventas"
+          COMPUTRABAJO_EMAIL: ${{ secrets.COMPUTRABAJO_EMAIL }}
+          COMPUTRABAJO_PASSWORD: ${{ secrets.COMPUTRABAJO_PASSWORD }}
         run: python main.py
 
       - name: Upload historial artifact

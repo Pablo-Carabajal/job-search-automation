@@ -15,14 +15,14 @@ class Config:
 
     RUTA_CV = BASE_DIR / os.getenv("RUTA_CV", "assets/cv.pdf")
     RUTA_HISTORIAL = BASE_DIR / os.getenv("RUTA_HISTORIAL", "data/historial.db")
-    RUTA_EMPRESAS_LOCALES = BASE_DIR / os.getenv("RUTA_EMPRESAS_LOCALES", "data/local_companies.json")
     RUTA_BLACKLIST = BASE_DIR / os.getenv("RUTA_BLACKLIST", "data/blacklist.txt")
 
+    COMPUTRABAJO_EMAIL = os.getenv("COMPUTRABAJO_EMAIL")
+    COMPUTRABAJO_PASSWORD = os.getenv("COMPUTRABAJO_PASSWORD")
+
     COOLDOWN_DIAS = int(os.getenv("COOLDOWN_DIAS") or "20")
-    MAX_FALLBACK_POR_DIA = int(os.getenv("MAX_FALLBACK_POR_DIA") or "10")
-    MINIMO_ENVIOS_DIARIOS = int(os.getenv("MINIMO_ENVIOS_DIARIOS") or "10")
+    MAX_POSTULACIONES_DIA = int(os.getenv("MAX_POSTULACIONES_DIA") or "7")
     DELAY_ENTRE_ENVIOS = int(os.getenv("DELAY_ENTRE_ENVIOS") or "45")
-    DELAY_ENTRE_FALLBACK = int(os.getenv("DELAY_ENTRE_FALLBACK") or "90")
     MAX_PAGINAS_PORTAL = int(os.getenv("MAX_PAGINAS_PORTAL") or "5")
 
     CATEGORIAS = [c.strip() for c in os.getenv("CATEGORIAS", "").split(",") if c.strip()]
@@ -32,7 +32,3 @@ class Config:
     PAIS = "Argentina"
 
     CANDIDATO_EMAIL = os.getenv("CANDIDATO_EMAIL", "carabajalpabloezequiel@gmail.com")
-
-    ASUNTO_OFERTA_TEMPLATE = "templates/asunto_oferta.txt"
-    CUERPO_OFERTA_TEMPLATE = "templates/cuerpo_oferta.txt"
-    CUERPO_ESPONTANEO_TEMPLATE = "templates/cuerpo_espontaneo.txt"
