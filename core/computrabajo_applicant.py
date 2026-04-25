@@ -6,6 +6,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from selenium.webdriver.common.keys import Keys
 
 from core.models import JobOffer
 
@@ -30,76 +31,70 @@ class ComputrabajoApplicant:
         self.driver = webdriver.Chrome(options=options)
         self.wait = WebDriverWait(self.driver, 30)
 
+    def _tipear(self, campo, texto):
+        """Simula tipeo humano caracter por caracter para activar validaciones JS."""
+        campo.click()
+        time.sleep(0.3)
+        for char in texto:
+            campo.send_keys(char)
+            time.sleep(random.uniform(0.05, 0.15))
+        time.sleep(0.5)
+
     def login(self) -> bool:
         logger.info("Iniciando login en Computrabajo...")
-        max_intentos = 2
-        intento = 0
-        
-        while intento < max_intentos:
+
+        for intento in range(2):
             try:
-                self.driver.get("https://ar.computrabajo.com/")
+                driver = self.driver
+                wait = self.wait
+
+                driver.get("https://candidato.ar.computrabajo.com/acceso/")
                 time.sleep(5)
-                
-                try:
-                    login_link = self.driver.find_element(By.CSS_SELECTOR, "a[href*='Acceso'], a[href*='login'], a[data-test='btn-login']")
-                    login_link.click()
-                    time.sleep(3)
-                except:
-                    pass
-                
-                url_actual = self.driver.current_url
-                logger.info(f"URL actual: {url_actual}")
-                
-                if "Acceso" not in url_actual and "login" not in url_actual:
-                    logger.info("Ya estamos logueados!")
+
+                url_actual = driver.current_url
+                logger.info(f"URL de login: {url_actual}")
+
+                # Tipear email caracter por caracter (activa validaciones JS)
+                campo_email = wait.until(EC.element_to_be_clickable((By.NAME, "Email")))
+                driver.execute_script("arguments[0].scrollIntoView(true);", campo_email)
+                self._tipear(campo_email, self.email)
+                logger.info("Email tipeado")
+
+                # Clic en Continuar para revelar el campo password
+                continuar = driver.find_element(By.ID, "continueWithMailButton")
+                driver.execute_script("arguments[0].click();", continuar)
+                time.sleep(4)
+                logger.info("Clic en Continuar ejecutado")
+
+                # Tipear password
+                campo_pass = wait.until(EC.presence_of_element_located((By.NAME, "Password")))
+                driver.execute_script("arguments[0].scrollIntoView(true);", campo_pass)
+                self._tipear(campo_pass, self.password)
+                logger.info("Password tipeado")
+
+                # Submit via Enter (mas confiable que clic en el boton)
+                campo_pass.send_keys(Keys.RETURN)
+                logger.info("Enter enviado para submit")
+                time.sleep(8)
+
+                url_post = driver.current_url
+                logger.info(f"URL post-login: {url_post}")
+
+                if "login" not in url_post.lower() and "account" not in url_post.lower():
+                    logger.info("Login exitoso en Computrabajo")
                     return True
-                
-                try:
-                    continuar_btn = self.wait.until(EC.presence_of_element_located((By.XPATH, "//button[contains(text(), 'Continuar')]")))
-                    logger.info("Boton Continuar encontrado")
-                except:
-                    pass
-                
-                email_input = self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='email']")))
-                logger.info("Email input encontrado")
-                
-                self.driver.execute_script(f"arguments[0].value = '{self.email}';", email_input)
-                logger.info("Email ingreado via JS")
-                time.sleep(2)
-                
-                continuar_btn = self.driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
-                continuar_btn.click()
-                logger.info("Click en boton continuar")
-                time.sleep(5)
-                
-                password_input = self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='password']")))
-                logger.info("Password input encontrado")
-                
-                self.driver.execute_script(f"arguments[0].value = '{self.password}';", password_input)
-                logger.info("Password ingreado via JS")
-                time.sleep(2)
-                
-                submit_btn = self.driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
-                submit_btn.click()
-                logger.info("Click en boton login final")
-                time.sleep(10)
-                
-                url_actual = self.driver.current_url
-                logger.info(f"URL despues de login: {url_actual}")
-                
-                if "/Acceso" not in url_actual.lower() and "login" not in url_actual.lower():
-                    logger.info("Login exitoso!")
-                    return True
-                    
+
+                logger.warning(f"Intento {intento + 1}/2: seguimos en login")
+
             except Exception as e:
-                logger.warning(f"Intento {intento + 1}/{max_intentos} fallo: {e}")
+                logger.warning(f"Intento {intento + 1}/2 fallo: {e}")
                 self.driver.save_screenshot(f"login_error_{intento}.png")
-                logger.info(f"Screenshot guardado: login_error_{intento}.png")
-                intento += 1
-                if intento < max_intentos:
-                    time.sleep(20)
-        
-        logger.error("Login fallo definitivamente")
+
+            if intento == 0:
+                logger.info("Reintentando en 30s...")
+                time.sleep(30)
+
+        logger.error("Login fallo definitivamente en Computrabajo")
         return False
 
     def buscar_ofertas(self) -> list[JobOffer]:
